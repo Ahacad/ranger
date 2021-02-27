@@ -5,22 +5,25 @@
 
 from __future__ import (absolute_import, division, print_function)
 
-from os.path import isdir, exists, dirname, abspath, realpath, expanduser, sep
+from os.path import exists, abspath, realpath, expanduser, sep
 import string
-import sys
+
+from ranger import PY3
+from ranger.core.shared import FileManagerAware
 
 ALLOWED_KEYS = string.ascii_letters + string.digits + string.punctuation
 
 
-class Tags(object):
+class Tags(FileManagerAware):
     default_tag = '*'
 
     def __init__(self, filename):
 
+        # COMPAT: The intent is to get abspath/normpath's behavior of
+        # collapsing `symlink/..`, abspath is retained for historical reasons
+        # because the documentation states its behavior isn't necessarily in
+        # line with normpath's.
         self._filename = realpath(abspath(expanduser(filename)))
-
-        if isdir(dirname(self._filename)) and not exists(self._filename):
-            open(self._filename, 'w')
 
         self.sync()
 
@@ -28,16 +31,17 @@ class Tags(object):
         return item in self.tags
 
     def add(self, *items, **others):
-        if 'tag' in others:
-            tag = others['tag']
-        else:
-            tag = self.default_tag
+        if len(*items) == 0:
+            return
+        tag = others.get('tag', self.default_tag)
         self.sync()
         for item in items:
             self.tags[item] = tag
         self.dump()
 
     def remove(self, *items):
+        if len(*items) == 0:
+            return
         self.sync()
         for item in items:
             try:
@@ -47,10 +51,9 @@ class Tags(object):
         self.dump()
 
     def toggle(self, *items, **others):
-        if 'tag' in others:
-            tag = others['tag']
-        else:
-            tag = self.default_tag
+        if len(*items) == 0:
+            return
+        tag = others.get('tag', self.default_tag)
         tag = str(tag)
         if tag not in ALLOWED_KEYS:
             return
@@ -72,12 +75,15 @@ class Tags(object):
 
     def sync(self):
         try:
-            if sys.version_info[0] >= 3:
+            if PY3:
                 fobj = open(self._filename, 'r', errors='replace')
             else:
                 fobj = open(self._filename, 'r')
-        except OSError:
-            pass
+        except OSError as err:
+            if exists(self._filename):
+                self.fm.notify(err, bad=True)
+            else:
+                self.tags = dict()
         else:
             self.tags = self._parse(fobj)
             fobj.close()
@@ -85,8 +91,8 @@ class Tags(object):
     def dump(self):
         try:
             fobj = open(self._filename, 'w')
-        except OSError:
-            pass
+        except OSError as err:
+            self.fm.notify(err, bad=True)
         else:
             self._compile(fobj)
             fobj.close()
